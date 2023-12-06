@@ -11,11 +11,27 @@ const int SCLK = 4;
 byte buf[512];
 char sprintbuf[128];
 
-#define dw digitalWrite
+volatile uint8_t * port_a;
+volatile uint8_t * port_clk;
+uint8_t mask_A;
+uint8_t mask_B;
+uint8_t mask_R;
+uint8_t mask_OE;
+uint8_t mask_CLK;
+uint8_t mask_SCLK;
+
+#define FRAMETIMES
+
+// #define dw digitalWrite
+#define dw2(port, m, b)              \
+    {                                \
+        if (b == 0) *port &= m;      \
+        else *port |= m;             \
+    }
 #define unsugarC(c)                  \
     {                                \
-        dw(A, (c & 1));              \
-        dw(B, ((c & 1) ^ (c >> 1))); \
+        dw2(port_a, A, (c & 1));              \
+        dw2(port_a, B, ((c & 1) ^ (c >> 1))); \
     }
 
 int coordToP(int x, int y)
@@ -25,7 +41,20 @@ int coordToP(int x, int y)
 
 void setup()
 {
-    Serial.begin(9600);
+    Serial.begin(115200);
+
+    port_a = portOutputRegister(digitalPinToPort(A)); // pins 8-13 = PORT_B
+    port_clk = portOutputRegister(digitalPinToPort(CLK)); // pins 0-7 = PORT_D
+
+    mask_OE = digitalPinToBitMask(OE);
+    mask_A = digitalPinToBitMask(A);
+    mask_B = digitalPinToBitMask(B);
+    mask_R = digitalPinToBitMask(R);
+    mask_CLK = digitalPinToBitMask(CLK);
+    mask_SCLK = digitalPinToBitMask(SCLK);
+
+    // *port_a |= mask_A; // equivalent to digitalWrite(A, HIGH)
+    // *port_a &= ~mask_A; // equivalent to digitalWrite(A, LOW)
     
     pinMode(OE, OUTPUT);
     pinMode(A, OUTPUT);
@@ -33,7 +62,7 @@ void setup()
     pinMode(R, OUTPUT);
     pinMode(CLK, OUTPUT);
     pinMode(SCLK, OUTPUT);
-    dw(OE, 0);
+    dw2(port_a, mask_OE, 0);
     for (int x = 0; x < 32; x++)
     {
         for (int y = 0; y < 16; y++)
@@ -51,12 +80,14 @@ void setup()
 }
 #ifdef FRAMETIMES
 int clock = 0;
+long maxdiff = 0;
+long mindiff = 999999;
 #endif
 void loop()
 {
 #ifdef FRAMETIMES
     clock += 1;
-    clock %= 100;
+    clock %= 1000;
     long time = micros();
 #endif
 
@@ -68,21 +99,25 @@ void loop()
                 for (int p = 0; p < 128; p++)
                 {
                     int px = ((p << 2) | c);
-                    dw(R, !(buf[px]));
-                    dw(CLK, 0);
-                    dw(CLK, 1);
+                    dw2(port_a, mask_R, !(buf[px]));
+                    dw2(port_clk, mask_CLK, 0);
+                    dw2(port_clk, mask_CLK, 1);
                 }
-                dw(SCLK, 0);
-                dw(SCLK, 1);
+                dw2(port_clk, mask_SCLK, 0);
+                dw2(port_clk, mask_SCLK, 1);
             }
         }
     }
 #ifdef FRAMETIMES
     long diff = micros() - time;
+    if (diff < mindiff) mindiff = diff;
+    if (diff > maxdiff) maxdiff = diff;
     if (clock == 0)
     {
-        sprintf(sprintbuf, "Frame in %d", diff);
+        sprintf(sprintbuf, "Frame in %ld (%ld - %ld)", diff, mindiff, maxdiff);
         Serial.println(sprintbuf);
+        maxdiff = 0;
+        mindiff = 999999;
     }
 #endif
 }
